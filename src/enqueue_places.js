@@ -16,6 +16,7 @@ const { checkInPolygon } = require('./polygon');
 
 const SEARCH_WAIT_TIME_MS = 30000;
 const CHECK_LOAD_OUTCOMES_EVERY_MS = 500;
+const QUICK_NEXT_PAGE_TRANSITION_TIME_THRESHOLD_MS = 100;
 
 /**
  * This handler waiting for response from xhr and enqueue places from the search response boddy.
@@ -209,6 +210,8 @@ module.exports.enqueueAllPlaceDetails = async ({
 
     const startZoom = /** @type {number} */ (parseZoomFromUrl(page.url()));
 
+    let numberOfQuickNextPageTransitions = 0;
+
     for (;;) {
         const {
             noOutcomeLoaded,
@@ -264,7 +267,18 @@ module.exports.enqueueAllPlaceDetails = async ({
         if (hasNextPage) {
             // NOTE: puppeteer API click() didn't work :|
             await page.evaluate((sel) => $(sel).click(), NEXT_BUTTON_SELECTOR);
+            const nextPageTransitionStartedAt = Date.now();
             await waitForGoogleMapLoader(page);
+            const nextPageTransitionTimeMs = Date.now() - nextPageTransitionStartedAt;
+            // Crawler falls into infinite loop in certain conditions.
+            // It was identified that when this happens we have very short time of google map loader.
+            // We created this condition to stop that infinite loop and move on to the next search URL.
+            if (nextPageTransitionTimeMs < QUICK_NEXT_PAGE_TRANSITION_TIME_THRESHOLD_MS) {
+                numberOfQuickNextPageTransitions += 1;
+                if (numberOfQuickNextPageTransitions) {
+                    return;
+                }
+            }
         }
     }
 };
